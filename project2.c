@@ -21,3 +21,7 @@ int main(){
     ...
     pthread_join(T1, NULL);
 }
+
+
+//create mutex
+pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
