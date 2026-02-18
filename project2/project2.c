@@ -63,7 +63,7 @@ int main(){
     
     
     // clean up resources
-    free(info);
+    free(info);  // TODO
     pthread_mutex_destroy(&m);
     
     return 0;
