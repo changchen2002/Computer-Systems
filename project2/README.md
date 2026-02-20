@@ -1,36 +1,145 @@
-1. Group2: Byunghyun Ko, Chang Chen, Yuchong Zhang
-2. Description:
-   This project implements a multithreaded stair-crossing simulation using POSIX threads and mutex synchronization. Multiple threads (1-30) attempt to traverse stairs simultaneously, each simulating a crossing time (1-13 seconds). The implementation uses a single mutex lock to ensure mutual exclusion—only one thread can be on the stairs at any time, regardless of direction. Each thread randomly chooses a direction (up or down) and follows the enter_stairs/exit_stairs protocol to safely access the shared stair resource. The goal is to demonstrate deadlock-free, starvation-free concurrent programming with proper synchronization primitives.
+# CS 5600 Project 2 – Staircase Simulation
 
-- Functions and its purpose:
-  - enter_stairs: Acquires the mutex lock before a thread enters the stairs. Ensures only one thread can be on the stairs at a time regardless of direction. Prints a message indicating which thread is entering and in which direction.
-  - exit_stairs: Releases the mutex lock after a thread completes traversing the stairs. Prints a message indicating which thread is exiting and in which direction. Allows the next waiting thread to enter.
-  - thread_function: The main routine for each thread. Calls enter_stairs to acquire the lock, simulates walking on stairs with sleep(sleep_time), then calls exit_stairs to release the lock and notify other waiting threads.
-  - main: Initializes random seed, generates random number of threads (1-30) and steps (1-13). Allocates memory for thread info structures, creates all threads with random directions (0=down, 1=up), waits for all threads to complete using pthread_join, and performs cleanup by freeing memory and destroying the mutex.
+## 1. Group Information
+Group 2  
+Byunghyun Ko, Chang Chen, Yuchong Zhang  
 
-- How you tested your project and list the test cases:
-   
+---
 
-- How you guarantee that your code is free of deadlock and starvation:
-   Deadlock Prevention: Our design uses a single mutex with no circular dependencies. Each thread acquires one lock, performs work, then releases it. Since there is only one resource (the mutex) and no condition variables creating wait chains, circular wait conditions are impossible.
-   
-   Starvation Prevention: POSIX mutexes implement fair FIFO scheduling at the kernel level. Waiting threads are queued and served in order of arrival, ensuring no thread is indefinitely starved. The mutex_lock operation is guaranteed to eventually return for each waiting thread. Since we use no priority mechanisms and all threads have equal priority, there are no priority inversions that could cause starvation.
-   
-   Verification: Deterministic testing with fixed random seeds produces identical execution patterns across runs, confirming no race conditions. Stress testing with maximum threads (30) and maximum sleep time (13 seconds) shows all threads eventually complete successfully.
+## 2. Description
+In this project, we implemented a multithreaded staircase simulation using POSIX threads. Each thread represents a customer trying to go either up or down a staircase.
 
-- Average Turnaround time of the examples you run and how you adjusted your project to make your design “efficient”:
+The staircase has a limited number of steps, and multiple threads are allowed on it at the same time as long as they are moving in the same direction. If threads from opposite directions try to enter at the same time, they must wait to avoid conflicts.
 
-- How to compile, run and test the code:
+The main goals of this project were:
+- Prevent deadlock
+- Prevent starvation
+- Allow multiple threads to move efficiently in the same direction
 
-- Contributions:
-Chang — Core concurrency algorithm (the “traffic controller”)
-a. Owns the shared state + rules: direction control, fairness policy, semaphores/mutex/conds, and the entry/exit protocol.
-b. Defines the API everyone else calls: enter_stairs(dir, id) / exit_stairs(dir, id).
+Each thread randomly chooses a direction, waits if necessary, simulates walking by sleeping, and then exits. We also measure turnaround time for each thread.
 
-Ben — Thread + simulation harness
-a. Parses command-line args (customers ≤ 30, steps ≤ 13), creates threads, assigns random directions, sleeps to simulate crossing time, collects timestamps for turnaround
-b. Calls A’s API and prints standardized logs (“should wait”, “crossing now”, etc.)
+---
 
-Yuchong — Testing + measurements
-Builds test scenarios (including deterministic seeds), checks deadlock/starvation properties with stress runs, computes average turnaround, and writes the “how we guarantee deadlock/starvation-free” + “how we tuned efficiency” sections.
+## 3. Implementation
 
+### Main Idea
+We treat the staircase as a shared resource with:
+- A maximum capacity (`steps`)
+- A current direction (`cur_dir`)
+- Counters to track waiting threads and fairness
+
+We use:
+- A mutex (`pthread_mutex_t`) to protect shared data
+- Condition variables to manage waiting threads
+
+---
+
+### Functions
+
+#### `enter_stairs(int dir, int id)`
+This function is called when a thread wants to enter the stairs.
+- Locks the mutex
+- Checks if the thread needs to wait (wrong direction, full capacity, fairness rules)
+- Waits using condition variables if needed
+- Updates shared variables when entering
+- Prints a message
+
+---
+
+#### `exit_stairs(int dir, int id)`
+This function is called when a thread leaves the stairs.
+- Locks the mutex
+- Decreases occupancy
+- Updates direction and fairness if needed
+- Wakes up waiting threads
+- Prints a message
+
+---
+
+#### `is_blocked(int d)`
+Helper function to decide whether a thread should wait.
+- Blocks if opposite direction is active
+- Blocks if fairness policy requires switching
+- Helps prevent starvation
+
+---
+
+#### `thread_function(void *vinfo)`
+This is what each thread runs.
+- Records start time
+- Calls `enter_stairs`
+- Sleeps to simulate walking
+- Calls `exit_stairs`
+- Records end time and computes turnaround time
+
+---
+
+#### `main`
+- Reads input or generates random values
+- Creates threads with random directions
+- Waits for all threads to finish
+- Prints turnaround times and average
+- Frees memory and destroys mutex
+
+---
+## 4. Testing
+
+---
+## 5. Deadlock and Starvation
+
+### Deadlock
+Deadlock is avoided because:
+- Only one mutex is used
+- Threads don’t hold multiple locks
+- No circular waiting
+
+---
+
+### Starvation
+We prevent starvation by:
+- Using a `turn` variable to switch direction when needed
+- Limiting how many threads from one direction can go in a row (`b_max`)
+- Making sure waiting threads eventually get a chance
+
+---
+
+### Verification
+We ran stress tests with maximum values and confirmed:
+- All threads finish
+- No thread gets stuck waiting forever
+
+---
+
+## 6. Performance
+
+We measured turnaround time for each thread using `clock_gettime`.
+
+Typical average turnaround time: ~6–10 seconds (depends on number of threads and steps)
+
+### Improvements
+- Allowing multiple threads in the same direction improves performance
+- Batch control reduces unnecessary switching
+- Threads don’t wait unless necessary
+
+---
+
+## 7. Compile and Run
+
+---
+
+## 8. Contributions
+
+**Chang Chen**
+- Designed synchronization logic
+- Implemented direction control and fairness
+- Wrote `enter_stairs` and `exit_stairs`
+
+**Byunghyun Ko**
+- Implemented thread creation and simulation
+- Handled random inputs and timing
+- Integrated everything together
+
+**Yuchong Zhang**
+- Created test cases
+- Verified deadlock and starvation conditions
+- Measured performance and wrote analysis
