@@ -112,15 +112,6 @@ We ran stress tests with maximum values and confirmed:
 
 ## 6. Performance
 
-We measured turnaround time for each thread using `clock_gettime`.
-
-Typical average turnaround time: ~6–10 seconds (depends on number of threads and steps)
-
-### Improvements
-- Allowing multiple threads in the same direction improves performance
-- Batch control reduces unnecessary switching
-- Threads don’t wait unless necessary
-
 ---
 
 ## 7. Compile and Run
