@@ -7,32 +7,11 @@ Byunghyun Ko, Chang Chen, Yuchong Zhang
 ---
 
 ## 2. Description
-In this project, we implemented a multithreaded staircase simulation using POSIX threads. Each thread represents a customer trying to go either up or down a staircase.
-
-The staircase has a limited number of steps, and multiple threads are allowed on it at the same time as long as they are moving in the same direction. If threads from opposite directions try to enter at the same time, they must wait to avoid conflicts.
-
-The main goals of this project were:
-- Prevent deadlock
-- Prevent starvation
-- Allow multiple threads to move efficiently in the same direction
-
-Each thread randomly chooses a direction, waits if necessary, simulates walking by sleeping, and then exits. We also measure turnaround time for each thread.
+This project builds a multithreaded staircase simulation using POSIX threads to represent individual customers navigating a shared space. The core logic allows multiple threads to occupy the staircase at once if they are all traveling in the same direction. Those approaching from the opposite side must wait for the path to clear. This design was created to avoid pitfalls of concurrent programming, such as deadlock and starvation, while maximizing efficiency through parallel movement. In the simulation, each thread randomly chooses a direction and waits for the appropriate signal before simulating its traversal through timed sleep intervals. To evaluate the system's performance, we tracked the turnaround time for every thread from its arrival to its exit.
 
 ---
 
 ## 3. Implementation
-
-### Main Idea
-We treat the staircase as a shared resource with:
-- A maximum capacity (`steps`)
-- A current direction (`cur_dir`)
-- Counters to track waiting threads and fairness
-
-We use:
-- A mutex (`pthread_mutex_t`) to protect shared data
-- Condition variables to manage waiting threads
-
----
 
 ### Functions
 
@@ -100,13 +79,6 @@ We prevent starvation by:
 - Using a `turn` variable to switch direction when needed
 - Limiting how many threads from one direction can go in a row (`b_max`)
 - Making sure waiting threads eventually get a chance
-
----
-
-### Verification
-We ran stress tests with maximum values and confirmed:
-- All threads finish
-- No thread gets stuck waiting forever
 
 ---
 
