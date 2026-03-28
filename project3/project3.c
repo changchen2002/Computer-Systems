@@ -228,7 +228,6 @@ static void update_job_metrics(Job *job_list, int total_count)
     }
 }
 
-/* Sort jobs so earlier arrivals come first; lower pid breaks ties */
 static void order_jobs_by_start(Job *arr, int count)
 {
     int pass, scan, earliest;
@@ -251,7 +250,6 @@ static void order_jobs_by_start(Job *arr, int count)
     }
 }
 
-/* Wipe per-run fields so the same job list can feed the next scheduler */
 static void prepare_jobs_for_run(Job *arr, int count)
 {
     int k;
