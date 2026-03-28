@@ -25,9 +25,9 @@ typedef struct Job {
     int completion_time;
     JobState state;
     struct Job *next;
-    int active_ticks;
-    int wait_ticks;
-    int sleep_ticks;
+    int activeT;
+    int waitT;
+    int sleepT;
 } Job;
 
 typedef struct {
@@ -219,11 +219,11 @@ static void update_job_metrics(Job *job_list, int total_count)
     for (idx = 0; idx < total_count; idx++) {
         Job *j = &job_list[idx];
         if (j->state == JOB_READY) {
-            j->wait_ticks++;
+            j->waitT++;
         } else if (j->state == JOB_WAITING) {
-            j->sleep_ticks++;
+            j->sleepT++;
         } else if (j->state == JOB_RUNNING) {
-            j->active_ticks++;
+            j->activeT++;
         }
     }
 }
@@ -243,8 +243,8 @@ static void order_jobs_by_start(Job *arr, int count)
                 smallest_index = s;
         }
         if (smallest_index != p) {
-            hold               = arr[p];
-            arr[p]             = arr[smallest_index];
+            hold                = arr[p];
+            arr[p]              = arr[smallest_index];
             arr[smallest_index] = hold;
         }
     }
@@ -262,9 +262,9 @@ static void prepare_jobs_for_run(Job *arr, int count)
         p->completion_time = -1;
         p->first_run_time  = -1;
         p->remaining_time  = p->total_cpu_time;
-        p->active_ticks    = 0;
-        p->sleep_ticks     = 0;
-        p->wait_ticks      = 0;
+        p->activeT         = 0;
+        p->sleepT          = 0;
+        p->waitT           = 0;
         p->time_in_quantum = 0;
     }
 }
@@ -283,8 +283,8 @@ static void display_scheduler_report(Job *work_list, int n_jobs, const char *sch
         if (min_turnaround < 0 || turnaround < min_turnaround) min_turnaround = turnaround;
         if (turnaround > max_turnaround) max_turnaround = turnaround;
         sum_turnaround += turnaround;
-        sum_wait       += work_list[i].wait_ticks;
-        sum_sleep      += work_list[i].sleep_ticks;
+        sum_wait       += work_list[i].waitT;
+        sum_sleep      += work_list[i].sleepT;
     }
 
     printf("\n %s scheduler \n\n", scheduler_name);
@@ -298,18 +298,18 @@ static void display_scheduler_report(Job *work_list, int n_jobs, const char *sch
         int in_system = work_list[i].completion_time - work_list[i].arrival_time;
         printf("pid%-6d| %-17d| %-17d| %d\n",
             work_list[i].id,
-            work_list[i].wait_ticks,
-            work_list[i].sleep_ticks,
+            work_list[i].waitT,
+            work_list[i].sleepT,
             in_system);
     }
 
     printf("==========+==================+==================+==========\n");
-    printf("Total simulation run time: %d\n",             max_time);
-    printf("Total number of jobs: %d\n",                  n_jobs);
-    printf("Shortest job completion time: %d\n",          min_turnaround);
-    printf("Longest job completion time: %d\n",           max_turnaround);
-    printf("Average job completion time: %d\n",   (int)(sum_turnaround / n_jobs));
-    printf("Average time in ready queue: %d\n",   (int)(sum_wait       / n_jobs));
+    printf("Total simulation run time: %d\n",           max_time);
+    printf("Total number of jobs: %d\n",                n_jobs);
+    printf("Shortest job completion time: %d\n",        min_turnaround);
+    printf("Longest job completion time: %d\n",         max_turnaround);
+    printf("Average job completion time: %d\n",  (int)(sum_turnaround / n_jobs));
+    printf("Average time in ready queue: %d\n",  (int)(sum_wait       / n_jobs));
     printf("Average time sleeping on I/O state: %d\n", (int)(sum_sleep / n_jobs));
 }
 
@@ -385,9 +385,9 @@ static int load_jobs_from_input(Job **out_ptr)
             list[n].time_in_quantum = 0;
             list[n].first_run_time  = -1;
             list[n].completion_time = -1;
-            list[n].wait_ticks      = 0;
-            list[n].sleep_ticks     = 0;
-            list[n].active_ticks    = 0;
+            list[n].waitT           = 0;
+            list[n].sleepT          = 0;
+            list[n].activeT         = 0;
             n++;
         }
     }
