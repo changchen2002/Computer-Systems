@@ -257,15 +257,15 @@ static void prepare_jobs_for_run(Job *arr, int count)
 
     for (k = 0; k < count; k++) {
         p = &arr[k];
-        p->remaining_time  = p->total_cpu_time;
         p->state           = JOB_NEW;
-        p->time_in_quantum = 0;
-        p->first_run_time  = -1;
-        p->completion_time = -1;
-        p->wait_ticks      = 0;
-        p->sleep_ticks     = 0;
-        p->active_ticks    = 0;
         p->next            = NULL;
+        p->completion_time = -1;
+        p->first_run_time  = -1;
+        p->remaining_time  = p->total_cpu_time;
+        p->active_ticks    = 0;
+        p->sleep_ticks     = 0;
+        p->wait_ticks      = 0;
+        p->time_in_quantum = 0;
     }
 }
 
