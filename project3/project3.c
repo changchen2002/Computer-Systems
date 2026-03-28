@@ -230,33 +230,33 @@ static void update_job_metrics(Job *job_list, int total_count)
 
 static void order_jobs_by_start(Job *arr, int count)
 {
-    int pass, scan, earliest;
+    int p, s, smallest_index;
     Job hold;
 
-    for (pass = 0; pass < count - 1; pass++) {
-        earliest = pass;
-        for (scan = pass + 1; scan < count; scan++) {
-            if (arr[scan].arrival_time < arr[earliest].arrival_time)
-                earliest = scan;
-            else if (arr[scan].arrival_time == arr[earliest].arrival_time
-                     && arr[scan].id < arr[earliest].id)
-                earliest = scan;
+    for (p = 0; p < count - 1; p++) {
+        smallest_index = p;
+        for (s = p + 1; s < count; s++) {
+            if (arr[s].arrival_time < arr[smallest_index].arrival_time)
+                smallest_index = s;
+            else if (arr[s].arrival_time == arr[smallest_index].arrival_time
+                     && arr[s].id < arr[smallest_index].id)
+                smallest_index = s;
         }
-        if (earliest != pass) {
-            hold          = arr[pass];
-            arr[pass]     = arr[earliest];
-            arr[earliest] = hold;
+        if (smallest_index != p) {
+            hold               = arr[p];
+            arr[p]             = arr[smallest_index];
+            arr[smallest_index] = hold;
         }
     }
 }
 
 static void prepare_jobs_for_run(Job *arr, int count)
 {
-    int k;
+    int x;
     Job *p;
 
-    for (k = 0; k < count; k++) {
-        p = &arr[k];
+    for (x = 0; x < count; x++) {
+        p = &arr[x];
         p->state           = JOB_NEW;
         p->next            = NULL;
         p->completion_time = -1;
@@ -366,8 +366,6 @@ static int load_jobs_from_input(Job **out_ptr)
     int n = 0, size = 16;
     Job *list = malloc(sizeof(Job) * size);
 
-    if (!list) return 0;
-
     while (fgets(buffer, sizeof(buffer), stdin)) {
         int p, a, s, pr;
         if (buffer[0] == '\n' || buffer[0] == '#' || buffer[0] == '\r') continue;
@@ -376,7 +374,6 @@ static int load_jobs_from_input(Job **out_ptr)
             if (n >= size) {
                 size *= 2;
                 list = realloc(list, sizeof(Job) * size);
-                if (!list) return 0;
             }
             list[n].id              = p;
             list[n].priority        = pr;
