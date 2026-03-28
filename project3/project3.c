@@ -228,35 +228,46 @@ static void update_job_metrics(Job *job_list, int total_count)
     }
 }
 
-static void reset_jobs(Job *jobs, int n_jobs)
+/* Sort jobs so earlier arrivals come first; lower pid breaks ties */
+static void order_jobs_by_start(Job *arr, int count)
 {
-    int i;
-    for (i = 0; i < n_jobs; i++) {
-        jobs[i].remaining_time  = jobs[i].total_cpu_time;
-        jobs[i].state           = JOB_NEW;
-        jobs[i].time_in_quantum = 0;
-        jobs[i].first_run_time  = -1;
-        jobs[i].completion_time = -1;
-        jobs[i].wait_ticks      = 0;
-        jobs[i].sleep_ticks     = 0;
-        jobs[i].active_ticks    = 0;
-        jobs[i].next            = NULL;
+    int pass, scan, earliest;
+    Job hold;
+
+    for (pass = 0; pass < count - 1; pass++) {
+        earliest = pass;
+        for (scan = pass + 1; scan < count; scan++) {
+            if (arr[scan].arrival_time < arr[earliest].arrival_time)
+                earliest = scan;
+            else if (arr[scan].arrival_time == arr[earliest].arrival_time
+                     && arr[scan].id < arr[earliest].id)
+                earliest = scan;
+        }
+        if (earliest != pass) {
+            hold          = arr[pass];
+            arr[pass]     = arr[earliest];
+            arr[earliest] = hold;
+        }
     }
 }
 
-static void sort_jobs_by_arrival(Job *jobs, int n)
+/* Wipe per-run fields so the same job list can feed the next scheduler */
+static void prepare_jobs_for_run(Job *arr, int count)
 {
-    int i, j;
-    for (i = 0; i < n - 1; i++) {
-        for (j = i + 1; j < n; j++) {
-            if (jobs[i].arrival_time > jobs[j].arrival_time ||
-               (jobs[i].arrival_time == jobs[j].arrival_time &&
-                jobs[i].id > jobs[j].id)) {
-                Job tmp  = jobs[i];
-                jobs[i]  = jobs[j];
-                jobs[j]  = tmp;
-            }
-        }
+    int k;
+    Job *p;
+
+    for (k = 0; k < count; k++) {
+        p = &arr[k];
+        p->remaining_time  = p->total_cpu_time;
+        p->state           = JOB_NEW;
+        p->time_in_quantum = 0;
+        p->first_run_time  = -1;
+        p->completion_time = -1;
+        p->wait_ticks      = 0;
+        p->sleep_ticks     = 0;
+        p->active_ticks    = 0;
+        p->next            = NULL;
     }
 }
 
@@ -372,20 +383,16 @@ static int load_jobs_from_input(Job **out_ptr)
             list[n].id              = p;
             list[n].priority        = pr;
             list[n].next            = NULL;
-
             list[n].arrival_time    = a;
             list[n].total_cpu_time  = s;
-            list[n].remaining_time  = s; 
-
+            list[n].remaining_time  = s;
             list[n].state           = JOB_NEW;
             list[n].time_in_quantum = 0;
-
             list[n].first_run_time  = -1;
             list[n].completion_time = -1;
             list[n].wait_ticks      = 0;
             list[n].sleep_ticks     = 0;
             list[n].active_ticks    = 0;
-
             n++;
         }
     }
@@ -399,18 +406,18 @@ int main(void)
     Job *job_array = NULL;
     int n = load_jobs_from_input(&job_array);
 
-    sort_jobs_by_arrival(job_array, n);
+    order_jobs_by_start(job_array, n);
 
-    reset_jobs(job_array, n);
-    run_scheduler(job_array, n);          
+    prepare_jobs_for_run(job_array, n);
+    run_scheduler(job_array, n);
     display_scheduler_report(job_array, n, "Preemptive Shortest Job First");
 
-    reset_jobs(job_array, n);
-    run_scheduler(job_array, n);          
+    prepare_jobs_for_run(job_array, n);
+    run_scheduler(job_array, n);
     display_scheduler_report(job_array, n, "Round Robin");
 
-    reset_jobs(job_array, n);
-    run_scheduler(job_array, n);          
+    prepare_jobs_for_run(job_array, n);
+    run_scheduler(job_array, n);
     display_scheduler_report(job_array, n, "Multi-Level Feedback Queue");
 
     free(job_array);
