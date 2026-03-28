@@ -399,12 +399,6 @@ int main(void)
     Job *job_array = NULL;
     int n = load_jobs_from_input(&job_array);
 
-    if (n <= 0) {
-        fprintf(stderr, "No jobs present.\n");
-        free(job_array);
-        return 1;
-    }
-
     sort_jobs_by_arrival(job_array, n);
 
     reset_jobs(job_array, n);
