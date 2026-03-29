@@ -358,6 +358,35 @@ static void add_new_incoming_jobs(Job jobs[], int job_count,
     }
 }
 
+static void insert_by_pid(JobQueue *queue, Job *job)
+{
+    Job *prev = NULL;
+    Job *cur = queue->head;
+
+    job->next = NULL;
+
+    while (cur != NULL && cur->id < job->id) {
+        prev = cur;
+        cur = cur->next;
+    }
+
+    if (prev == NULL) {
+        job->next = queue->head;
+        queue->head = job;
+        if (queue->tail == NULL) {
+            queue->tail = job;
+        }
+    } else {
+        prev->next = job;
+        job->next = cur;
+        if (cur == NULL) {
+            queue->tail = job;
+        }
+    }
+
+    queue->length++;
+}
+
 static void process_waiting_jobs(JobQueue *waiting_queue,
                                  JobQueue *ready_queue,
                                  JobQueue mlfq_queues[],
@@ -367,11 +396,15 @@ static void process_waiting_jobs(JobQueue *waiting_queue,
     Job *next_job;
     Job *previous = NULL;
 
+    JobQueue completed_this_tick;
+    queue_init(&completed_this_tick);
+
     job = waiting_queue->head;
     while (job != NULL) {
         next_job = job->next;
 
         if (IO_complete()) {
+            /* remove from waiting queue */
             if (previous == NULL) {
                 waiting_queue->head = next_job;
             } else {
@@ -385,12 +418,19 @@ static void process_waiting_jobs(JobQueue *waiting_queue,
             waiting_queue->length--;
             job->next = NULL;
 
-            move_to_ready_policy(ready_queue, mlfq_queues, job, "io-complete", policy, 0);
+            /* collect all completed jobs this tick, then sort by PID */
+            insert_by_pid(&completed_this_tick, job);
         } else {
             previous = job;
         }
 
         job = next_job;
+    }
+
+    while (!queue_is_empty(&completed_this_tick)) {
+        Job *completed_job = dequeue(&completed_this_tick);
+        move_to_ready_policy(ready_queue, mlfq_queues, completed_job,
+                             "io-complete", policy, 0);
     }
 }
 
