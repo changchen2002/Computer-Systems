@@ -4,7 +4,14 @@
 
 #define CHANCE_OF_IO_REQUEST 10
 #define CHANCE_OF_IO_COMPLETE 4
-#define TIME_QUANTUM 3
+
+#define RR_TIME_QUANTUM 3
+
+#define MLFQ_LEVELS 3
+#define MLFQ_Q0_QUANTUM 1
+#define MLFQ_Q1_QUANTUM 2
+#define MLFQ_Q2_QUANTUM 4
+#define MLFQ_BOOST_INTERVAL 10
 
 typedef enum {
     JOB_NEW,
@@ -14,20 +21,30 @@ typedef enum {
     JOB_FINISHED
 } JobState;
 
+typedef enum {
+    POLICY_PSJF,
+    POLICY_RR,
+    POLICY_MLFQ
+} SchedulerPolicy;
+
 typedef struct Job {
     int id;
     int arrival_time;
     int total_cpu_time;
     int remaining_time;
     int priority;
+
     int time_in_quantum;
     int first_run_time;
     int completion_time;
     JobState state;
     struct Job *next;
+
     int activeT;
     int waitT;
     int sleepT;
+
+    int mlfq_level;
 } Job;
 
 typedef struct {
@@ -50,18 +67,12 @@ static int os_rand(void)
 
 int IO_request(void)
 {
-    if (os_rand() % CHANCE_OF_IO_REQUEST == 0) {
-        return 1;
-    }
-    return 0;
+    return (os_rand() % CHANCE_OF_IO_REQUEST == 0);
 }
 
 int IO_complete(void)
 {
-    if (os_rand() % CHANCE_OF_IO_COMPLETE == 0) {
-        return 1;
-    }
-    return 0;
+    return (os_rand() % CHANCE_OF_IO_COMPLETE == 0);
 }
 
 static const char *job_state_name(JobState state)
@@ -123,94 +134,12 @@ static void log_transition(const Job *job, const char *event)
            clock_time, job->id, job_state_name(job->state), event);
 }
 
-static void move_to_ready(JobQueue *ready_queue, Job *job, const char *reason)
-{
-    job->state = JOB_READY;
-    job->time_in_quantum = 0;
-    enqueue(ready_queue, job);
-    log_transition(job, reason);
-}
-
-static void move_to_waiting(JobQueue *waiting_queue, Job *job, const char *reason)
-{
-    job->state = JOB_WAITING;
-    job->time_in_quantum = 0;
-    enqueue(waiting_queue, job);
-    log_transition(job, reason);
-}
-
 static void mark_finished(Job *job)
 {
     job->state = JOB_FINISHED;
     job->completion_time = clock_time + 1;
     job->time_in_quantum = 0;
     log_transition(job, "completed");
-}
-
-static void add_new_incoming_jobs(Job jobs[], int job_count, JobQueue *ready_queue)
-{
-    int i;
-    for (i = 0; i < job_count; i++) {
-        if (jobs[i].state == JOB_NEW && jobs[i].arrival_time <= clock_time) {
-            move_to_ready(ready_queue, &jobs[i], "arrived");
-        }
-    }
-}
-
-static void process_waiting_jobs(JobQueue *waiting_queue, JobQueue *ready_queue)
-{
-    Job *job;
-    Job *next_job;
-    Job *previous = NULL;
-
-    job = waiting_queue->head;
-    while (job != NULL) {
-        next_job = job->next;
-        if (IO_complete()) {
-            if (previous == NULL) {
-                waiting_queue->head = next_job;
-            } else {
-                previous->next = next_job;
-            }
-            if (waiting_queue->tail == job) {
-                waiting_queue->tail = previous;
-            }
-            waiting_queue->length--;
-            job->next = NULL;
-            move_to_ready(ready_queue, job, "io-complete");
-        } else {
-            previous = job;
-        }
-        job = next_job;
-    }
-}
-
-static Job *choose_job_to_execute(JobQueue *ready_queue)
-{
-    Job *job = dequeue(ready_queue);
-    if (job != NULL) {
-        job->state = JOB_RUNNING;
-        if (job->first_run_time < 0) {
-            job->first_run_time = clock_time;
-        }
-        log_transition(job, "dispatched");
-    }
-    return job;
-}
-
-static int jobs_remaining(Job jobs[], int job_count, const JobQueue *ready_queue,
-                          const JobQueue *waiting_queue, const Job *current_job)
-{
-    int i;
-    if (!queue_is_empty(ready_queue) || !queue_is_empty(waiting_queue) || current_job != NULL) {
-        return 1;
-    }
-    for (i = 0; i < job_count; i++) {
-        if (jobs[i].state != JOB_FINISHED) {
-            return 1;
-        }
-    }
-    return 0;
 }
 
 static void update_job_metrics(Job *job_list, int total_count)
@@ -266,6 +195,7 @@ static void prepare_jobs_for_run(Job *arr, int count)
         p->sleepT          = 0;
         p->waitT           = 0;
         p->time_in_quantum = 0;
+        p->mlfq_level      = 0;
     }
 }
 
@@ -287,7 +217,7 @@ static void display_scheduler_report(Job *work_list, int n_jobs, const char *sch
         sum_sleep      += work_list[i].sleepT;
     }
 
-    printf("\n %s scheduler \n\n", scheduler_name);
+    printf("\n%s scheduler\n\n", scheduler_name);
 
     printf("     Job# | Total time       | Total time       | Total time\n");
     printf("          | in ready to run  | in sleeping on   | in system\n");
@@ -297,46 +227,327 @@ static void display_scheduler_report(Job *work_list, int n_jobs, const char *sch
     for (i = 0; i < n_jobs; i++) {
         int in_system = work_list[i].completion_time - work_list[i].arrival_time;
         printf("pid%-6d| %-17d| %-17d| %d\n",
-            work_list[i].id,
-            work_list[i].waitT,
-            work_list[i].sleepT,
-            in_system);
+               work_list[i].id,
+               work_list[i].waitT,
+               work_list[i].sleepT,
+               in_system);
     }
 
     printf("==========+==================+==================+==========\n");
-    printf("Total simulation run time: %d\n",           max_time);
-    printf("Total number of jobs: %d\n",                n_jobs);
-    printf("Shortest job completion time: %d\n",        min_turnaround);
-    printf("Longest job completion time: %d\n",         max_turnaround);
-    printf("Average job completion time: %d\n",  (int)(sum_turnaround / n_jobs));
-    printf("Average time in ready queue: %d\n",  (int)(sum_wait       / n_jobs));
+    printf("Total simulation run time: %d\n", max_time);
+    printf("Total number of jobs: %d\n", n_jobs);
+    printf("Shortest job completion time: %d\n", min_turnaround);
+    printf("Longest job completion time: %d\n", max_turnaround);
+    printf("Average job completion time: %d\n", (int)(sum_turnaround / n_jobs));
+    printf("Average time in ready queue: %d\n", (int)(sum_wait / n_jobs));
     printf("Average time sleeping on I/O state: %d\n", (int)(sum_sleep / n_jobs));
 }
 
-static void run_scheduler(Job jobs[], int job_count)
+static int jobs_remaining(Job jobs[], int job_count,
+                          const JobQueue *ready_queue,
+                          const JobQueue *waiting_queue,
+                          const Job *current_job,
+                          JobQueue mlfq_queues[],
+                          SchedulerPolicy policy)
+{
+    int i;
+
+    if (policy == POLICY_MLFQ) {
+        for (i = 0; i < MLFQ_LEVELS; i++) {
+            if (!queue_is_empty(&mlfq_queues[i])) {
+                return 1;
+            }
+        }
+    } else {
+        if (!queue_is_empty(ready_queue)) {
+            return 1;
+        }
+    }
+
+    if (!queue_is_empty(waiting_queue) || current_job != NULL) {
+        return 1;
+    }
+
+    for (i = 0; i < job_count; i++) {
+        if (jobs[i].state != JOB_FINISHED) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static Job *psjf_pick_best(JobQueue *ready_queue)
+{
+    Job *best, *cur, *prev, *best_prev;
+
+    if (ready_queue->head == NULL) return NULL;
+
+    best = ready_queue->head;
+    cur  = ready_queue->head->next;
+
+    while (cur != NULL) {
+        if (cur->remaining_time < best->remaining_time ||
+           (cur->remaining_time == best->remaining_time && cur->id < best->id)) {
+            best = cur;
+        }
+        cur = cur->next;
+    }
+
+    prev      = NULL;
+    best_prev = NULL;
+    cur       = ready_queue->head;
+
+    while (cur != best) {
+        prev = cur;
+        cur  = cur->next;
+    }
+    best_prev = prev;
+
+    if (best_prev == NULL)
+        ready_queue->head = best->next;
+    else
+        best_prev->next = best->next;
+
+    if (ready_queue->tail == best)
+        ready_queue->tail = best_prev;
+
+    best->next = NULL;
+    ready_queue->length--;
+    return best;
+}
+
+static void move_to_ready_policy(JobQueue *ready_queue,
+                                 JobQueue mlfq_queues[],
+                                 Job *job,
+                                 const char *reason,
+                                 SchedulerPolicy policy,
+                                 int is_new_arrival)
+{
+    job->state = JOB_READY;
+    job->time_in_quantum = 0;
+
+    if (policy == POLICY_PSJF) {
+        enqueue(ready_queue, job);
+    } else if (policy == POLICY_RR) {
+        enqueue(ready_queue, job);
+    } else {
+        if (is_new_arrival) {
+            job->mlfq_level = 0;
+        }
+        enqueue(&mlfq_queues[job->mlfq_level], job);
+    }
+
+    log_transition(job, reason);
+}
+
+static void move_to_waiting(JobQueue *waiting_queue, Job *job, const char *reason)
+{
+    job->state = JOB_WAITING;
+    job->time_in_quantum = 0;
+    enqueue(waiting_queue, job);
+    log_transition(job, reason);
+}
+
+static void add_new_incoming_jobs(Job jobs[], int job_count,
+                                  JobQueue *ready_queue,
+                                  JobQueue mlfq_queues[],
+                                  SchedulerPolicy policy)
+{
+    int i;
+    for (i = 0; i < job_count; i++) {
+        if (jobs[i].state == JOB_NEW && jobs[i].arrival_time <= clock_time) {
+            move_to_ready_policy(ready_queue, mlfq_queues, &jobs[i], "arrived", policy, 1);
+        }
+    }
+}
+
+static void collect_sorted_by_pid(Job *completed[], int *count, Job *job)
+{
+    int pos = *count;
+
+    while (pos > 0 && completed[pos - 1]->id > job->id) {
+        completed[pos] = completed[pos - 1];
+        pos--;
+    }
+    completed[pos] = job;
+    (*count)++;
+}
+
+static void process_waiting_jobs(JobQueue *waiting_queue,
+                                 JobQueue *ready_queue,
+                                 JobQueue mlfq_queues[],
+                                 SchedulerPolicy policy)
+{
+    Job *completed_arr[1024];
+    int  completed_count = 0;
+    Job *prev = NULL;
+    Job *cur  = waiting_queue->head;
+
+    while (cur != NULL) {
+        Job *next = cur->next;
+
+        if (IO_complete()) {
+            if (prev == NULL)
+                waiting_queue->head = next;
+            else
+                prev->next = next;
+
+            if (waiting_queue->tail == cur)
+                waiting_queue->tail = prev;
+
+            waiting_queue->length--;
+            cur->next = NULL;
+
+            collect_sorted_by_pid(completed_arr, &completed_count, cur);
+        } else {
+            prev = cur;
+        }
+        cur = next;
+    }
+
+    int k;
+    for (k = 0; k < completed_count; k++) {
+        move_to_ready_policy(ready_queue, mlfq_queues,
+                             completed_arr[k], "io-complete", policy, 0);
+    }
+}
+
+static Job *choose_job_to_execute(JobQueue *ready_queue,
+                                  JobQueue mlfq_queues[],
+                                  SchedulerPolicy policy)
+{
+    Job *job = NULL;
+
+    if (policy == POLICY_PSJF) {
+        job = psjf_pick_best(ready_queue);
+    } else if (policy == POLICY_RR) {
+        job = dequeue(ready_queue);
+    } else {
+        int lvl = 0;
+        while (lvl < MLFQ_LEVELS) {
+            if (!queue_is_empty(&mlfq_queues[lvl])) {
+                job = dequeue(&mlfq_queues[lvl]);
+                break;
+            }
+            lvl++;
+        }
+    }
+
+    if (job != NULL) {
+        job->state = JOB_RUNNING;
+        if (job->first_run_time < 0) {
+            job->first_run_time = clock_time;
+        }
+        log_transition(job, "dispatched");
+    }
+
+    return job;
+}
+
+static int should_preempt_psjf(const Job *active_job, const JobQueue *ready_queue)
+{
+    const Job *cur;
+
+    if (active_job == NULL) return 0;
+
+    cur = ready_queue->head;
+    while (cur != NULL) {
+        if (cur->remaining_time < active_job->remaining_time ||
+           (cur->remaining_time == active_job->remaining_time &&
+            cur->id < active_job->id)) {
+            return 1;
+        }
+        cur = cur->next;
+    }
+    return 0;
+}
+
+static int mlfq_quantum_for_level(int level)
+{
+    if (level == 0) return MLFQ_Q0_QUANTUM;
+    if (level == 1) return MLFQ_Q1_QUANTUM;
+    return MLFQ_Q2_QUANTUM;
+}
+
+static void mlfq_priority_boost(JobQueue mlfq_queues[],
+                                JobQueue *waiting_queue,
+                                Job *active_job)
+{
+    int i;
+
+    for (i = 1; i < MLFQ_LEVELS; i++) {
+        while (!queue_is_empty(&mlfq_queues[i])) {
+            Job *j = dequeue(&mlfq_queues[i]);
+            j->mlfq_level      = 0;
+            j->time_in_quantum = 0;
+            enqueue(&mlfq_queues[0], j);
+        }
+    }
+
+    Job *curr = waiting_queue->head;
+    while (curr != NULL) {
+        curr->mlfq_level = 0;
+        curr->time_in_quantum = 0;
+        curr = curr->next;
+    }
+
+    if (active_job != NULL) {
+        active_job->mlfq_level      = 0;
+        active_job->time_in_quantum = 0;
+    }
+}
+
+static void run_scheduler(Job jobs[], int job_count, SchedulerPolicy policy)
 {
     JobQueue ready_q, waiting_q;
+    JobQueue mlfq_q[MLFQ_LEVELS];
     Job *active_job = NULL;
+    int i;
 
     queue_init(&ready_q);
     queue_init(&waiting_q);
+    for (i = 0; i < MLFQ_LEVELS; i++) {
+        queue_init(&mlfq_q[i]);
+    }
+
     clock_time = 0;
     os_srand(1);
 
-    add_new_incoming_jobs(jobs, job_count, &ready_q);
+    while (jobs_remaining(jobs, job_count, &ready_q, &waiting_q, active_job, mlfq_q, policy)) {
 
-    while (jobs_remaining(jobs, job_count, &ready_q, &waiting_q, active_job)) {
-        if (!active_job) active_job = choose_job_to_execute(&ready_q);
+        process_waiting_jobs(&waiting_q, &ready_q, mlfq_q, policy);
 
-        add_new_incoming_jobs(jobs, job_count, &ready_q);
-        process_waiting_jobs(&waiting_q, &ready_q);
+        add_new_incoming_jobs(jobs, job_count, &ready_q, mlfq_q, policy);
 
-        if (!active_job) {
-            printf("clock=%2d cpu=IDLE\n", clock_time++);
-            continue;
+        if (policy == POLICY_MLFQ &&
+            clock_time > 0 &&
+            clock_time % MLFQ_BOOST_INTERVAL == 0) {
+            mlfq_priority_boost(mlfq_q, &waiting_q, active_job);
         }
 
-        update_job_metrics(jobs, job_count);
+        if (policy == POLICY_PSJF && active_job != NULL &&
+            should_preempt_psjf(active_job, &ready_q)) {
+            move_to_ready_policy(&ready_q, mlfq_q, active_job, "preempted", policy, 0);
+            active_job = NULL;
+        } else if (policy == POLICY_MLFQ && active_job != NULL) {
+            int top = 0;
+            while (top < MLFQ_LEVELS && queue_is_empty(&mlfq_q[top])) top++;
+            if (top < active_job->mlfq_level) {
+                move_to_ready_policy(&ready_q, mlfq_q, active_job, "preempted", policy, 0);
+                active_job = NULL;
+            }
+        }
+
+        if (!active_job) {
+            active_job = choose_job_to_execute(&ready_q, mlfq_q, policy);
+        }
+
+        if (!active_job) {
+            printf("clock=%2d cpu=IDLE\n", clock_time);
+            update_job_metrics(jobs, job_count);
+            clock_time++;
+            continue;
+        }
 
         active_job->remaining_time--;
         active_job->time_in_quantum++;
@@ -345,15 +556,30 @@ static void run_scheduler(Job jobs[], int job_count)
                clock_time, active_job->id, job_state_name(active_job->state),
                active_job->remaining_time);
 
+        update_job_metrics(jobs, job_count);
+
         if (active_job->remaining_time == 0) {
             mark_finished(active_job);
             active_job = NULL;
-        } else if (IO_request()) {
-            move_to_waiting(&waiting_q, active_job, "io-request");
-            active_job = NULL;
-        } else if (active_job->time_in_quantum >= TIME_QUANTUM) {
-            move_to_ready(&ready_q, active_job, "time-slice-expired");
-            active_job = NULL;
+        } else {
+            if (IO_request()) {
+                move_to_waiting(&waiting_q, active_job, "io-request");
+                active_job = NULL;
+            } else if (policy == POLICY_RR &&
+                active_job->time_in_quantum >= RR_TIME_QUANTUM) {
+                move_to_ready_policy(&ready_q, mlfq_q, active_job,
+                                     "time-slice-expired", policy, 0);
+                active_job = NULL;
+            } else if (policy == POLICY_MLFQ &&
+                       active_job->time_in_quantum >=
+                       mlfq_quantum_for_level(active_job->mlfq_level)) {
+                if (active_job->mlfq_level < MLFQ_LEVELS - 1) {
+                    active_job->mlfq_level++;
+                }
+                move_to_ready_policy(&ready_q, mlfq_q, active_job,
+                                     "time-slice-expired", policy, 0);
+                active_job = NULL;
+            }
         }
 
         clock_time++;
@@ -366,14 +592,24 @@ static int load_jobs_from_input(Job **out_ptr)
     int n = 0, size = 16;
     Job *list = malloc(sizeof(Job) * size);
 
+    if (list == NULL) {
+        exit(1);
+    }
+
     while (fgets(buffer, sizeof(buffer), stdin)) {
         int p, a, s, pr;
         if (buffer[0] == '\n' || buffer[0] == '#' || buffer[0] == '\r') continue;
 
         if (sscanf(buffer, "%d:%d:%d:%d", &p, &a, &s, &pr) == 4) {
             if (n >= size) {
+                Job *tmp;
                 size *= 2;
-                list = realloc(list, sizeof(Job) * size);
+                tmp = realloc(list, sizeof(Job) * size);
+                if (tmp == NULL) {
+                    free(list);
+                    exit(1);
+                }
+                list = tmp;
             }
             list[n].id              = p;
             list[n].priority        = pr;
@@ -388,6 +624,7 @@ static int load_jobs_from_input(Job **out_ptr)
             list[n].waitT           = 0;
             list[n].sleepT          = 0;
             list[n].activeT         = 0;
+            list[n].mlfq_level      = 0;
             n++;
         }
     }
@@ -396,24 +633,43 @@ static int load_jobs_from_input(Job **out_ptr)
     return n;
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
     Job *job_array = NULL;
-    int n = load_jobs_from_input(&job_array);
+    int n;
+
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <sjf|rr|mlfq>\n", argv[0]);
+        return 1;
+    }
+
+    n = load_jobs_from_input(&job_array);
+
+    if (n == 0) {
+        fprintf(stderr, "No jobs loaded.\n");
+        free(job_array);
+        return 1;
+    }
 
     order_jobs_by_start(job_array, n);
 
-    prepare_jobs_for_run(job_array, n);
-    run_scheduler(job_array, n);
-    display_scheduler_report(job_array, n, "Preemptive Shortest Job First");
-
-    prepare_jobs_for_run(job_array, n);
-    run_scheduler(job_array, n);
-    display_scheduler_report(job_array, n, "Round Robin");
-
-    prepare_jobs_for_run(job_array, n);
-    run_scheduler(job_array, n);
-    display_scheduler_report(job_array, n, "Multi-Level Feedback Queue");
+    if (strcmp(argv[1], "sjf") == 0) {
+        prepare_jobs_for_run(job_array, n);
+        run_scheduler(job_array, n, POLICY_PSJF);
+        display_scheduler_report(job_array, n, "Preemptive Shortest Job First");
+    } else if (strcmp(argv[1], "rr") == 0) {
+        prepare_jobs_for_run(job_array, n);
+        run_scheduler(job_array, n, POLICY_RR);
+        display_scheduler_report(job_array, n, "Round Robin");
+    } else if (strcmp(argv[1], "mlfq") == 0) {
+        prepare_jobs_for_run(job_array, n);
+        run_scheduler(job_array, n, POLICY_MLFQ);
+        display_scheduler_report(job_array, n, "Multi-Level Feedback Queue");
+    } else {
+        fprintf(stderr, "Unknown policy: %s\n", argv[1]);
+        free(job_array);
+        return 1;
+    }
 
     free(job_array);
     return 0;
