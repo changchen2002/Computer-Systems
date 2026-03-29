@@ -511,13 +511,14 @@ static void run_scheduler(Job jobs[], int job_count, SchedulerPolicy policy)
             active_job = choose_job_to_execute(&ready_q, mlfq_q, policy);
         }
 
+        /* 5. update per-tick statistics no matter whether CPU is idle */
+        update_job_metrics(jobs, job_count);
+
         if (!active_job) {
             printf("clock=%2d cpu=IDLE\n", clock_time);
             clock_time++;
             continue;
         }
-
-        update_job_metrics(jobs, job_count);
 
         active_job->remaining_time--;
         active_job->time_in_quantum++;
